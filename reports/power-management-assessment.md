@@ -1,46 +1,36 @@
-# Power-management assessment
+# 功耗管理评估
 
-## What the supplied measurements demonstrate
+## 已提供的测量说明了什么
 
-The provided register snapshots and load measurements establish that the
-previous work changed MSR and MMIO PL1 from 10W to 20W while preserving PL2
-(60W), lock state and other protection fields. About 18W package power and
-2.95GHz average all-core frequency after a 30-second warm-up are consistent
-with a 20W *ceiling*, not evidence of a failed setting. No case has been made
-to raise PL1 above 20W or to change PL2, PL4, ICCMAX, PROCHOT or temperature
-protection.
+寄存器快照和负载测量表明，既有方案将 MSR/MMIO PL1 从 10W 提升到 20W，同时保留了
+PL2（60W）、锁位和其他保护字段。30 秒预热后约 18W 封装功耗、约 2.95GHz 全核平均频率
+符合“20W 是上限”的预期，并不代表设置失败。目前没有证据支持把 PL1 提到 20W 以上，
+也不应修改 PL2、PL4、ICCMAX、PROCHOT 或温度保护。
 
-`CPU LIMIT PL1` can be historical telemetry; it must not be treated as an
-active limiter without a contemporaneous power/frequency measurement.
+`CPU LIMIT PL1` 可能是历史遥测；没有同一时段的功耗/频率测量时，不能把它视为当前限制。
 
-## Automatic-apply policy in this branch
+## 本分支的自动应用策略
 
-- Fixed target: 20W only, AC only, i7-1165G7 identity check.
-- Kext checks Tiger Lake model, power units, PL1 enable and lock state,
-  permitted value range and read-back before writes.
-- The MMIO path cross-checks the mapped MMIO power-unit field against MSR
-  `0x606`, maps a single page, and changes only PL1 bits 0:14.
-- The old five-minute persistent `StartInterval` is removed. The daemon makes
-  a single boot-time, idempotent check rather than repeatedly touching
-  registers. A later sleep/wake policy requires separate real-hardware
-  validation.
+- 固定目标仅为 20W；仅 AC；检查 i7-1165G7 身份。
+- Kext 写入前检查 Tiger Lake 型号、功率单位、PL1 启用/锁定状态、允许的值范围及回读。
+- MMIO 路径将映射的功率单位与 MSR `0x606` 交叉校验，只映射一页，只改 PL1 的 bit 0:14。
+- 已移除原先永久的五分钟 `StartInterval`。守护进程仅在启动时进行一次幂等检查，
+  不再反复访问寄存器；睡眠唤醒策略仍须单独实机验证。
 
-This policy intentionally retains the existing MSR/MMIO 20W implementation
-instead of adding a second power-management system.
+该策略复用既有 MSR/MMIO 20W 方案，不另建第二套功耗管理系统。
 
-## Validation still required
+## 仍需验证
 
-All rows below are **unverified on hardware** in this workspace.
+下表均为**尚未实机验证**项目。
 
-| Item | Acceptance evidence |
+| 项目 | 验收证据 |
 | --- | --- |
-| New Kext build | GitHub Actions x86_64 Kext and CLI build artifact, SHA256 passes |
-| MSR crash path | New Kext installed; generic CLI command rejected; no `0x776` probe is made |
-| PL1/MMIO state | Approved `verify.sh --hardware` output shows allowed MMIO endpoint only |
-| Sustained performance | 30s warm-up plus `powermetrics` and normal CPU benchmark on AC |
-| Sleep/wake | Several controlled sleep/wake cycles with no WindowServer fault |
-| Rollback | Backup folder and USB EFI proven bootable before rollout |
+| 新 Kext 构建 | GitHub Actions 的 x86_64 Kext、CLI 构建产物及 SHA256 通过 |
+| MSR 崩溃路径 | 安装新 Kext 后，通用 CLI 命令被拒绝；不探测 `0x776` |
+| PL1/MMIO 状态 | 获批准后 `verify.sh --hardware` 仅输出受限 MMIO 端点信息 |
+| 持续性能 | AC 下 30 秒预热，加 `powermetrics` 与正常 CPU 基准 |
+| 睡眠唤醒 | 多次受控睡眠/唤醒且无 WindowServer 故障 |
+| 回退 | 部署前已证明备份目录和 USB EFI 可启动 |
 
-The required test order is baseline first, then the audited 20W build. Record
-package power, all-core frequency, temperature and any active limit indication;
-do not require exactly 20.00W.
+测试顺序应先做基线，再做已审计的 20W 构建。记录封装功耗、全核频率、温度及当前限制
+提示，不要求精确达到 20.00W。
