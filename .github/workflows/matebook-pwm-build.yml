@@ -14,7 +14,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Check out exact upstream WhateverXe 0.8.0
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: b00t0x/WhateverXe
           ref: 0.8.0
@@ -22,7 +22,7 @@ jobs:
           persist-credentials: false
 
       - name: Check out pinned MacKernelSDK
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: acidanthera/MacKernelSDK
           ref: 05094e5e88cec7caedbfb35e8449ed0db94bf95b
@@ -30,7 +30,7 @@ jobs:
           persist-credentials: false
 
       - name: Check out Lilu 1.7.2
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: acidanthera/Lilu
           ref: 1.7.2
@@ -198,6 +198,24 @@ jobs:
             -I wex/WhateverXe "$RUNNER_TEMP/matebook-pwm/test_pwm.cpp" \
             -o "$RUNNER_TEMP/matebook-pwm/test_pwm"
           "$RUNNER_TEMP/matebook-pwm/test_pwm"
+
+      - name: Register experimental PWM boot arguments in upstream test fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("wex/tests/fixtures/boot_argument_names.json")
+          names = ("-wex-tgl-bl2x", "-wex-tgl-bl3x", "-wex-tgl-blfull")
+          fixture = json.loads(p.read_text(encoding="utf-8"))
+          for name in names:
+              if name in fixture:
+                  raise SystemExit(f"Unexpected duplicate boot argument: {name}")
+              fixture[name] = []
+          p.write_text(json.dumps(fixture, indent=2) + "\n", encoding="utf-8")
+          print("Registered experimental boot arguments:", ", ".join(names))
+          PY
 
       - name: Upstream CPU test suite
         working-directory: wex
