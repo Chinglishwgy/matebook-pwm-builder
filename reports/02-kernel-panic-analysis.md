@@ -1,7 +1,5 @@
-# P0 kernel-panic analysis
+# P0：内核 Panic 分析
 
-See [kernel-panic-root-cause.md](kernel-panic-root-cause.md) for the complete
-analysis. The only panic with supplied evidence is the 19:25:12 general
-protection fault in VoltageShift when executing `RDMSR 0x776`. The other two
-named kernel panic files have not been supplied and must be read before being
-grouped with this failure.
+完整结论见 [kernel-panic-root-cause.md](kernel-panic-root-cause.md)。任务书提供证据
+的只有 19:25:12 那份 General Protection Fault：VoltageShift 执行了
+`RDMSR 0x776`。另两份指定的 Panic 原始文件尚未提供，必须先读取，不能直接归为同因。
