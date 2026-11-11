@@ -23,7 +23,7 @@ replace_once(head, '#include <IOKit/IOBufferMemoryDescriptor.h>',
 '''#include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
 #include <IOKit/pci/IOPCIDevice.h>
-#include <IOKit/IOIterator.h>''')
+#include <libkern/c++/OSIterator.h>''')
 replace_once(head, '    virtual IOReturn actionMethodWRMSR(UInt32 *dataIn, UInt32 *dataOut, IOByteCount inputSize, IOByteCount *outputSize);',
 '''    virtual IOReturn actionMethodWRMSR(UInt32 *dataIn, UInt32 *dataOut, IOByteCount inputSize, IOByteCount *outputSize);
     virtual IOReturn actionMethodMMIORAPL(UInt32 *dataIn, UInt32 *dataOut, IOByteCount inputSize, IOByteCount *outputSize);''')
