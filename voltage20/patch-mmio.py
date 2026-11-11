@@ -111,9 +111,12 @@ IOReturn AnVMSRUserClient::actionMethodMMIORAPL(UInt32 *dataIn, UInt32 *dataOut,
 
     // Map only page [MCHBAR+0x5000, +0x5fff] with uncached device semantics.
     const IOPhysicalAddress phys = (IOPhysicalAddress)(mchbar + 0x5000ULL);
+    // withRange hands back a retained raw IODeviceMemory; map() returns an
+    // OSPtr<IOMemoryMap> which retains its descriptor. Release the raw owner.
     auto mem = IODeviceMemory::withRange(phys, 0x1000);
     if (!mem) return kIOReturnNoMemory;
     auto map = mem->map(kIOMapInhibitCache);
+    mem->release();
     if (!map) return kIOReturnNoMemory;
 
     const uintptr_t va = (uintptr_t)map->getVirtualAddress();
