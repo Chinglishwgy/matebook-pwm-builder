@@ -1,0 +1,93 @@
+name: MateBook Tiger Lake MMIO RAPL PL1 20W
+
+on:
+  push:
+    paths:
+      - 'voltage20/**'
+      - '.github/workflows/matebook-mmio-20.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 35
+    steps:
+      - name: Checkout scripts
+        uses: actions/checkout@v5
+
+      - name: Checkout pinned VoltageShiftSecure source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone -q https://github.com/xCuri0/VoltageShiftSecure.git vs
+          git -C vs checkout --detach 6b4612c004a4631c4c3e4831f2a6989718dea6a5
+          test "$(git -C vs rev-parse HEAD)" = 6b4612c004a4631c4c3e4831f2a6989718dea6a5
+
+      - name: Apply guarded MSR+MMIO patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 voltage20/patch-voltageshift.py
+          python3 voltage20/patch-mmio.py
+          grep -q 'actionMethodMMIORAPL' vs/VoltageShiftAnVMSR/VoltageShfitAnVMSR.cpp
+          grep -q 'MMIO20_READ_OK' vs/VoltageShiftAnVMSR/main.mm
+          grep -q 'MMIO20_OK' vs/VoltageShiftAnVMSR/main.mm
+          grep -q 'com.apple.iokit.IOPCIFamily' vs/VoltageShiftAnVMSR/VoltageShift-Info.plist
+
+      - name: Build Tiger Lake MMIO VoltageShift Kext on Intel macOS
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -project vs/VoltageShift.xcodeproj \
+            -configuration Release -target VoltageShift -sdk macosx \
+            ARCHS=x86_64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO \
+            CONFIGURATION_BUILD_DIR="$GITHUB_WORKSPACE/build-products" -quiet
+          test -s build-products/VoltageShift.kext/Contents/MacOS/VoltageShift
+          file build-products/VoltageShift.kext/Contents/MacOS/VoltageShift
+
+      - name: Build VoltageShift CLI with mmio-read and mmio20
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -project vs/VoltageShift.xcodeproj \
+            -configuration Release -target voltageshift -sdk macosx \
+            ARCHS=x86_64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO \
+            CONFIGURATION_BUILD_DIR="$GITHUB_WORKSPACE/build-products" -quiet
+          test -s build-products/voltageshift
+          strings build-products/voltageshift | grep -q MMIO20_READ_OK
+          strings build-products/voltageshift | grep -q MMIO20_OK
+          strings build-products/voltageshift | grep -q PL1_20W_OK
+
+      - name: Validate package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' build-products/VoltageShift.kext/Contents/Info.plist)" = VoltageShift
+          test "$(/usr/libexec/PlistBuddy -c 'Print :OSBundleLibraries:com.apple.iokit.IOPCIFamily' build-products/VoltageShift.kext/Contents/Info.plist)" = 2.9
+          plutil -lint voltage20/com.matebook.mmio-20.plist
+          for p in voltage20/install-mmio-20w.sh voltage20/auto-mmio20.sh voltage20/rollback-mmio-20w.sh; do
+            bash -n "$p"
+          done
+          mkdir -p output/MateBook-MMIO-20W
+          ditto build-products/VoltageShift.kext output/MateBook-MMIO-20W/VoltageShift.kext
+          cp build-products/voltageshift output/MateBook-MMIO-20W/voltageshift
+          cp voltage20/{install-mmio-20w.sh,auto-mmio20.sh,rollback-mmio-20w.sh,com.matebook.mmio-20.plist,MMIO-README.md} output/MateBook-MMIO-20W/
+          chmod +x output/MateBook-MMIO-20W/{voltageshift,install-mmio-20w.sh,auto-mmio20.sh,rollback-mmio-20w.sh}
+          git -C vs rev-parse HEAD > output/MateBook-MMIO-20W/upstream-commit.txt
+          cd output
+          ditto -c -k --keepParent MateBook-MMIO-20W MateBook-MMIO-20W-Install.zip
+          shasum -a 256 MateBook-MMIO-20W-Install.zip > SHA256SUMS
+          shasum -a 256 -c SHA256SUMS
+
+      - name: Publish MMIO experimental binary package
+        uses: actions/upload-artifact@v4
+        with:
+          name: MateBook-MMIO-PL1-20W-Experimental
+          path: |
+            output/MateBook-MMIO-20W-Install.zip
+            output/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
