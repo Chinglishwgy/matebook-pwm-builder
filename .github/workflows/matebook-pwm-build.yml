@@ -86,7 +86,7 @@ jobs:
                               control, period, factor);
                           if (adjusted.applied) {
                               value = adjusted.duty;
-                              const uint32_t receipt[] = {1U, factor, original, value, period, control};
+                              uint32_t receipt[] = {1U, factor, original, value, period, control};
                               IORegistryEntry::getRegistryRoot()->setProperty(
                                   "TGLBacklightScaleTest", receipt, sizeof(receipt));
                           }
