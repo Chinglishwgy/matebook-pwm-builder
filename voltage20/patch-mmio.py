@@ -123,6 +123,14 @@ IOReturn AnVMSRUserClient::actionMethodMMIORAPL(UInt32 *dataIn, UInt32 *dataOut,
         map->release(); mem->release();
         return kIOReturnNoMemory;
     }
+    // Cross-check MMIO SKU power-unit register (+0x5938) against
+    // MSR 0x606 before accessing RAPL. Detects an incorrect physical mapping.
+    volatile uint32_t *mmioUnitAddr = (volatile uint32_t *)(va + 0x938);
+    const uint32_t mmioUnitRaw = *mmioUnitAddr;
+    if ((mmioUnitRaw & 0xfU) != unitExp) {
+        map->release(); mem->release();
+        return kIOReturnUnsupported;
+    }
     volatile uint32_t *lowAddr = (volatile uint32_t *)(va + 0x9a0);
     volatile uint32_t *highAddr = (volatile uint32_t *)(va + 0x9a4);
     const uint32_t beforeLo = *lowAddr;
