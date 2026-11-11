@@ -81,11 +81,10 @@ IOReturn AnVMSRUserClient::actionMethodMMIORAPL(UInt32 *dataIn, UInt32 *dataOut,
     if (targetRaw > 0x7fffU)
         return kIOReturnUnsupported;
 
-    OSDictionary *match = IOService::serviceMatching("IOPCIDevice");
+    auto match = IOService::serviceMatching("IOPCIDevice");
     if (!match) return kIOReturnNoMemory;
-    OSIterator *iter = nullptr;
-    const IOReturn finding = IOService::getMatchingServices(match, &iter);
-    if (finding != kIOReturnSuccess || !iter) return kIOReturnNotFound;
+    auto iter = IOService::getMatchingServices(match.get());
+    if (!iter) return kIOReturnNotFound;
 
     uint32_t mchLow = 0, mchHigh = 0;
     bool found = false;
@@ -101,7 +100,6 @@ IOReturn AnVMSRUserClient::actionMethodMMIORAPL(UInt32 *dataIn, UInt32 *dataOut,
         found = true;
         break;
     }
-    iter->release();
     if (!found) return kIOReturnNotFound;
     // v1 deliberately rejects high 32-bit MCHBAR addresses. Never guess.
     if (!(mchLow & 0x1U) || mchHigh != 0)
@@ -113,14 +111,13 @@ IOReturn AnVMSRUserClient::actionMethodMMIORAPL(UInt32 *dataIn, UInt32 *dataOut,
 
     // Map only page [MCHBAR+0x5000, +0x5fff] with uncached device semantics.
     const IOPhysicalAddress phys = (IOPhysicalAddress)(mchbar + 0x5000ULL);
-    IODeviceMemory *mem = IODeviceMemory::withRange(phys, 0x1000);
+    auto mem = IODeviceMemory::withRange(phys, 0x1000);
     if (!mem) return kIOReturnNoMemory;
-    IOMemoryMap *map = mem->map(kIOMapInhibitCache);
-    if (!map) { mem->release(); return kIOReturnNoMemory; }
+    auto map = mem->map(kIOMapInhibitCache);
+    if (!map) return kIOReturnNoMemory;
 
     const uintptr_t va = (uintptr_t)map->getVirtualAddress();
     if (!va || map->getLength() < 0x9a8) {
-        map->release(); mem->release();
         return kIOReturnNoMemory;
     }
     // Cross-check MMIO SKU power-unit register (+0x5938) against
@@ -128,7 +125,6 @@ IOReturn AnVMSRUserClient::actionMethodMMIORAPL(UInt32 *dataIn, UInt32 *dataOut,
     volatile uint32_t *mmioUnitAddr = (volatile uint32_t *)(va + 0x938);
     const uint32_t mmioUnitRaw = *mmioUnitAddr;
     if ((mmioUnitRaw & 0xfU) != unitExp) {
-        map->release(); mem->release();
         return kIOReturnUnsupported;
     }
     volatile uint32_t *lowAddr = (volatile uint32_t *)(va + 0x9a0);
@@ -171,8 +167,6 @@ IOReturn AnVMSRUserClient::actionMethodMMIORAPL(UInt32 *dataIn, UInt32 *dataOut,
     reply->msr = (UInt32)mchbar;
     reply->param = (uint64_t(endHi) << 32) | endLo;
     *outputSize = sizeof(inout);
-    map->release();
-    mem->release();
     return result;
 #endif
 }
