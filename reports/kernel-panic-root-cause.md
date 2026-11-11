@@ -1,59 +1,49 @@
-# VoltageShift kernel panic: root-cause assessment
+# VoltageShift 内核 Panic 根因报告
 
-Status: **confirmed for `Kernel-2026-11-11-192512.panic` from the supplied
-excerpt; other panic files are not available in this workspace and remain
-unverified.**
+状态：**已确认 `Kernel-2026-11-11-192512.panic` 的根因；工作区没有其余 Panic
+原始文件，不能认定它们同因。**
 
-## Confirmed causal path
+## 已确认的调用路径
 
-The supplied panic excerpt names `pid 1555: voltageshift`, the
-`com.sicreative.VoltageShift` Kext, and the path
-`AnVMSRUserClient::actionMethodRDMSR` → `VoltageShiftAnVMSR::a_rdmsr`, with
-`RCX/RSI = 0x776` at a general-protection fault. This is direct evidence of an
-unsupported `RDMSR 0x776` executed in kernel context.
+任务书给出的 Panic 片段显示：进程为 `pid 1555: voltageshift`，加载的 Kext 为
+`com.sicreative.VoltageShift`，调用路径是
+`AnVMSRUserClient::actionMethodRDMSR` → `VoltageShiftAnVMSR::a_rdmsr`；
+General Protection Fault 时 `RCX/RSI = 0x776`。这直接证明内核上下文执行了
+不受支持的 `RDMSR 0x776`。
 
-Audit of the pinned upstream source (`xCuri0/VoltageShiftSecure`
-`6b4612c004a4631c4c3e4831f2a6989718dea6a5`) explains the failure:
+对固定上游版本 `xCuri0/VoltageShiftSecure`
+`6b4612c004a4631c4c3e4831f2a6989718dea6a5` 的审计解释了该故障：
 
-- `actionMethodRDMSR` dereferences an unvalidated request and invokes
-  `mDevice->a_rdmsr(msrdata->msr)`.
-- `a_rdmsr` calls `rdmsr64(msr)` without a capability or address check.
-- `actionMethodWRMSR` likewise sends an arbitrary request directly to
-  `wrmsr64`.
-- The root-only UserClient check limits callers, but does not make unsupported
-  CPU instructions safe. Neither input/output structure size is validated.
+- `actionMethodRDMSR` 未验证请求，直接调用
+  `mDevice->a_rdmsr(msrdata->msr)`。
+- `a_rdmsr` 未检查 CPU 能力或寄存器地址，直接执行 `rdmsr64(msr)`。
+- `actionMethodWRMSR` 同样把任意地址和值交给 `wrmsr64`。
+- 虽然 UserClient 仅允许 root 访问，但这不能使不受支持的 CPU 指令变得安全；
+  输入、输出结构体长度也未校验。
 
-An unsupported MSR can raise #GP; a C++ exception handler is not a valid
-kernel recovery mechanism and is not used here.
+不受支持的 MSR 会引发 #GP。不能、也没有使用 C++ 异常来“捕获”内核 #GP。
 
-## Remediation implemented in this branch
+## 本分支的修复
 
-`voltage20/patch-msr-allowlist.py` changes the generated Kext so that it:
+`voltage20/patch-msr-allowlist.py` 生成的 Kext 采取最小权限策略：
 
-1. Requires Intel family 6, model `0x8c` (Tiger Lake-U).
-2. Permits reads only of `0x606` (RAPL units) and `0x610` (package power
-   limit).
-3. Permits writes only to `0x610`, only when the supplied value exactly equals
-   a kernel-recomputed PL1=20W update. It preserves every other bit, rejects a
-   disabled/locked limit, does not reduce a higher existing limit, and checks
-   read-back.
-4. Rejects every other MSR, including `0x776`, before `rdmsr64` is called.
-5. Rejects legacy generic `read`, `write`, voltage, turbo, monitor and general
-   power CLI commands before they reach the driver.
+1. 仅接受 Intel family 6、model `0x8c`（Tiger Lake-U）。
+2. 仅读取 `0x606`（RAPL 功率单位）和 `0x610`（封装功耗限制）。
+3. 仅可写入 `0x610`，且传入值必须与内核重新计算出的“只改 PL1 为 20W”
+   完全一致。禁用或锁定时拒绝；不会降低更高的既有上限；写后回读。
+4. 任何其他 MSR，包括 `0x776`，都在调用 `rdmsr64` 之前拒绝。
+5. CLI 禁止旧的通用 `read`、`write`、电压、Turbo、监控和通用功耗命令。
 
-Static tests inspect this policy without accessing any real MSR. Hardware
-validation of the new Kext is **not yet performed**.
+静态测试只检查源码策略，不访问真实 MSR。新 Kext 尚**未经过实机验证**。
 
-## Unverified evidence required
+## 仍需提供的证据
 
-Collect the three raw panic reports before assigning the same cause to the
-other two. Use `tools/collect-readonly-diagnostics.sh`; it never accesses MSRs.
-For each report, record panicked process, exception/trap, backtrace extension,
-and the actual MSR operand if present.
+在给另两份 Panic 定性前，请先收集三个原始报告。运行
+`tools/collect-readonly-diagnostics.sh` 即可；它不访问任何 MSR。对每份报告记录
+panic 进程、异常/陷阱、回溯中的 Kext，以及出现时的 MSR 操作数。
 
-## Recovery
+## 当前建议与回退
 
-Keep both 20W LaunchDaemons disabled until the new artifact is built and the
-installation checklist is approved. The package backs up the replaced Kext and
-CLI; `uninstall-or-rollback.sh` restores them after the active EFI is supplied
-explicitly via `EFI_MOUNT`.
+在新构建完成、安装检查表获确认前，保持两个 20W LaunchDaemon 禁用。安装包会备份
+被替换的 Kext 和 CLI；明确指定实际生效 EFI 的 `EFI_MOUNT` 后，可用
+`uninstall-or-rollback.sh` 恢复。
