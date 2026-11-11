@@ -83,7 +83,7 @@ IOReturn AnVMSRUserClient::actionMethodMMIORAPL(UInt32 *dataIn, UInt32 *dataOut,
 
     auto match = IOService::serviceMatching("IOPCIDevice");
     if (!match) return kIOReturnNoMemory;
-    auto iter = IOService::getMatchingServices(match.get());
+    auto iter = IOService::getMatchingServices(match);
     if (!iter) return kIOReturnNotFound;
 
     uint32_t mchLow = 0, mchHigh = 0;
