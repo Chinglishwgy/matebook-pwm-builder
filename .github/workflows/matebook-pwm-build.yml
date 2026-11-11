@@ -1,0 +1,230 @@
+name: Build WhateverXe 0.8.0 MateBook PWM test
+
+# Run manually; will not push or publish anything.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Test and build x86_64 Kext
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact upstream WhateverXe 0.8.0
+        uses: actions/checkout@v4
+        with:
+          repository: b00t0x/WhateverXe
+          ref: 0.8.0
+          path: wex
+          persist-credentials: false
+
+      - name: Check out pinned MacKernelSDK
+        uses: actions/checkout@v4
+        with:
+          repository: acidanthera/MacKernelSDK
+          ref: 05094e5e88cec7caedbfb35e8449ed0db94bf95b
+          path: wex/MacKernelSDK
+          persist-credentials: false
+
+      - name: Check out Lilu 1.7.2
+        uses: actions/checkout@v4
+        with:
+          repository: acidanthera/Lilu
+          ref: 1.7.2
+          path: wex/build/dependencies/Lilu
+          persist-credentials: false
+
+      - name: Prepare Lilu build headers
+        shell: bash
+        run: |
+          mkdir -p wex/Lilu.kext/Contents/Resources
+          ln -s "$GITHUB_WORKSPACE/wex/build/dependencies/Lilu/Lilu/Headers" wex/Lilu.kext/Contents/Resources/Headers
+          ln -s "$GITHUB_WORKSPACE/wex/build/dependencies/Lilu/Lilu/Library" wex/Lilu.kext/Contents/Resources/Library
+
+      - name: Inject guarded PWM experiment source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/matebook-pwm"
+          cat > "$RUNNER_TEMP/matebook-pwm/apply_source_patch.py" <<'PYSCRIPT'
+          #!/usr/bin/env python3
+          """Inject a conservative, opt-in Tiger Lake PWM duty scaler into WEX 0.8.0 SOURCE.
+
+          Does not modify boot args, EFI, installed kexts, macOS or registers. Run only
+          against a separately cloned 0.8.0 source tree. Creates backups before writes.
+          """
+          from pathlib import Path
+          import argparse
+          import shutil
+          import sys
+
+          INCLUDE_ANCHOR = '#include "kern_xelp_panel_power.hpp"'
+          WRITE_ANCHOR = '\tFunctionCast(wrapTGLRegisterWrite, callbackXE->orgTGLRegisterWrite)(access, reg, value);'
+          MARKER = 'TGLBacklightScale::adjust('
+          INSERT = '''
+              // Experimental MACHD-WXX9-only duty scale. Disabled unless one of the
+              // explicit boot flags is passed. Never write MMIO outside the donor lock.
+              // Only 8086:9A49, normal-polarity enabled PWM, and observed period 96000.
+              if (callbackXE->tglActive && !callbackXE->adlsDisplaySelected &&
+                  reg == TGLBacklightScale::DutyRegister && callbackXE->orgTGLRegisterRead) {
+                  uint32_t factor = 0;
+                  if (checkKernelArgument("-wex-tgl-bl2x")) factor = 200;
+                  else if (checkKernelArgument("-wex-tgl-bl3x")) factor = 300;
+                  else if (checkKernelArgument("-wex-tgl-blfull")) factor = 540;
+                  if (factor && callbackXE->tglDeviceId == TGLBacklightScale::SupportedDeviceId) {
+                      auto ctl = static_cast<uint8_t *>(callbackXE->tglObservationController);
+                      if (ctl && access && *reinterpret_cast<void **>(ctl + 0xC40) == access) {
+                          const auto read = FunctionCast(wrapTGLRegisterRead, callbackXE->orgTGLRegisterRead);
+                          const uint32_t control = read(access, 0xC8250);
+                          const uint32_t period = read(access, 0xC8254);
+                          const uint32_t original = value;
+                          const auto adjusted = TGLBacklightScale::adjust(
+                              callbackXE->tglDeviceId, static_cast<uint32_t>(reg), original,
+                              control, period, factor);
+                          if (adjusted.applied) {
+                              value = adjusted.duty;
+                              const uint32_t receipt[] = {1U, factor, original, value, period, control};
+                              IORegistryEntry::getRegistryRoot()->setProperty(
+                                  "TGLBacklightScaleTest", receipt, sizeof(receipt));
+                          }
+                      }
+                  }
+              }
+          '''
+
+
+          def main():
+              ap = argparse.ArgumentParser(description=__doc__)
+              ap.add_argument('--repo', required=True, type=Path, help='local WhateverXe v0.8.0 source directory')
+              ap.add_argument('--write', action='store_true', help='write patched source and install helper (creates backup)')
+              args = ap.parse_args()
+              repo = args.repo.expanduser().resolve()
+              source = repo / 'WhateverXe' / 'kern_xe.cpp'
+              helper = repo / 'WhateverXe' / 'kern_tgl_backlight_scale.hpp'
+              if not source.is_file():
+                  sys.exit(f'ERROR: cannot find {source}')
+              txt = source.read_text(encoding='utf-8')
+              if MARKER in txt:
+                  sys.exit('Already patched (marker detected). No files changed.')
+              if txt.count(INCLUDE_ANCHOR) != 1 or txt.count(WRITE_ANCHOR) != 1:
+                  sys.exit('Unexpected source layout: require one exact include/write anchor. No files changed.')
+              if 'TGLBacklightPWM' not in txt or 'wrapTGLRegisterWrite' not in txt:
+                  sys.exit('Required WEX 0.8.0 PWM paths missing. No files changed.')
+              if helper.exists():
+                  sys.exit(f'Helper already exists: {helper}. No files changed.')
+              revised = txt.replace(INCLUDE_ANCHOR, INCLUDE_ANCHOR + '\n#include "kern_tgl_backlight_scale.hpp"', 1)
+              revised = revised.replace(WRITE_ANCHOR, INSERT + '\n' + WRITE_ANCHOR, 1)
+              if not args.write:
+                  print('DRY RUN OK: both exact source anchors found; would add opt-in guarded PWM code.')
+                  print('Run with --write to modify this SOURCE CHECKOUT (not your EFI).')
+                  return
+              backup = source.with_suffix('.cpp.before-matebook-pwm')
+              if backup.exists():
+                  sys.exit(f'Backup already exists: {backup}. No files changed.')
+              shutil.copy2(source, backup)
+              try:
+                  shutil.copy2(Path(__file__).parent / 'kern_tgl_backlight_scale.hpp', helper)
+                  source.write_text(revised, encoding='utf-8')
+              except Exception:
+                  if backup.exists():
+                      shutil.copy2(backup, source)
+                  if helper.exists():
+                      helper.unlink()
+                  raise
+              print(f'Patched: {source}\nBackup: {backup}\nAdded:  {helper}')
+              print('No kext was built, installed or enabled. Build and test separately on macOS.')
+
+
+          if __name__ == '__main__':
+              main()
+          PYSCRIPT
+          cat > "$RUNNER_TEMP/matebook-pwm/kern_tgl_backlight_scale.hpp" <<'HEADER'
+          // Experimental MateBook X Pro 2021 Tiger Lake PWM brightness guard.
+          // Standalone, constexpr-friendly math only; no direct MMIO access.
+          // NOT tested as a built kernel extension or on real hardware.
+          #pragma once
+          #include <stdint.h>
+
+          namespace TGLBacklightScale {
+          struct Result { uint32_t duty; bool applied; };
+
+          static constexpr uint16_t SupportedDeviceId = 0x9A49U;
+          static constexpr uint32_t DutyRegister = 0xC8258U;
+          static constexpr uint32_t PwmPeriod = 96000U;
+          static constexpr uint32_t DonorReferenceMax = 17777U; // Hypothesis, not an established driver constant.
+          static constexpr uint32_t EnabledNormalPolarity = 0x80000000U;
+
+          inline Result adjust(uint16_t deviceId, uint32_t reg, uint32_t original,
+                               uint32_t control, uint32_t period, uint32_t factorPercent) {
+              if (deviceId != SupportedDeviceId || reg != DutyRegister ||
+                  factorPercent < 200U || factorPercent > 540U ||
+                  control != EnabledNormalPolarity || period != PwmPeriod ||
+                  original > DonorReferenceMax || original == 0U)
+                  return { original, false };
+              // Multiply in 64 bits. Do not alter the physical PWM period or polarity.
+              const uint64_t scaled = (uint64_t(original) * factorPercent + 50U) / 100U;
+              const uint32_t duty = scaled > period ? period : static_cast<uint32_t>(scaled);
+              return { duty, true };
+          }
+          } // namespace TGLBacklightScale
+          HEADER
+          cat > "$RUNNER_TEMP/matebook-pwm/test_pwm.cpp" <<'CPPTEST'
+          #include "kern_tgl_backlight_scale.hpp"
+          #include <cassert>
+          #include <cstdio>
+          using namespace TGLBacklightScale;
+          int main() {
+            assert(adjust(0x9A49,0xC8258,1545,0x80000000,96000,200).duty==3090);
+            assert(adjust(0x9A49,0xC8258,17741,0x80000000,96000,200).duty==35482);
+            assert(adjust(0x9A49,0xC8258,17741,0x80000000,96000,300).duty==53223);
+            assert(adjust(0x9A49,0xC8258,17741,0x80000000,96000,540).duty==95801);
+            assert(!adjust(0x9A48,0xC8258,17741,0x80000000,96000,540).applied);
+            assert(!adjust(0x9A49,0xC8250,17741,0x80000000,96000,540).applied);
+            assert(!adjust(0x9A49,0xC8258,17741,0x80000000,95000,540).applied);
+            assert(!adjust(0x9A49,0xC8258,17741,0xa0000000,96000,540).applied);
+            assert(!adjust(0x9A49,0xC8258,18000,0x80000000,96000,540).applied);
+            assert(!adjust(0x9A49,0xC8258,0,0x80000000,96000,540).applied);
+            assert(!adjust(0x9A49,0xC8258,17741,0x80000000,96000,100).applied);
+            assert(adjust(0x9A49,0xC8258,17777,0x80000000,96000,540).duty<=96000);
+            std::puts("12 PWM math and safety-guard checks passed");
+          }
+          CPPTEST
+          python3 "$RUNNER_TEMP/matebook-pwm/apply_source_patch.py" --repo wex
+          python3 "$RUNNER_TEMP/matebook-pwm/apply_source_patch.py" --repo wex --write
+          c++ -std=c++17 -Wall -Wextra -Werror \
+            -I wex/WhateverXe "$RUNNER_TEMP/matebook-pwm/test_pwm.cpp" \
+            -o "$RUNNER_TEMP/matebook-pwm/test_pwm"
+          "$RUNNER_TEMP/matebook-pwm/test_pwm"
+
+      - name: Upstream CPU test suite
+        working-directory: wex
+        run: python3 tools/test.py
+
+      - name: Compile RELEASE test Kext
+        working-directory: wex
+        run: python3 tools/build.py --release --output build/RELEASE
+
+      - name: Validate and package test-only WhateverXe
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s wex/build/RELEASE/WhateverXe.kext/Contents/MacOS/WhateverXe
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' wex/build/RELEASE/WhateverXe.kext/Contents/Info.plist | grep -Fx org.b00t0x.WhateverXe
+          file wex/build/RELEASE/WhateverXe.kext/Contents/MacOS/WhateverXe
+          mkdir -p output
+          ditto -c -k --keepParent wex/build/RELEASE/WhateverXe.kext output/WhateverXe-0.8.0-MateBook-PWM-EXPERIMENT.zip
+          cp wex/build/RELEASE/build-manifest.json output/build-manifest.json
+          cd output
+          shasum -a 256 *.zip > SHA256SUMS
+          shasum -a 256 -c SHA256SUMS
+
+      - name: Upload compiled Kext and hash
+        uses: actions/upload-artifact@v4
+        with:
+          name: MateBook-PWM-Experimental-RELEASE
+          path: output/*
+          if-no-files-found: error
+          retention-days: 14
