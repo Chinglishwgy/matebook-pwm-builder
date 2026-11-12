@@ -1,0 +1,45 @@
+name: Experimental HP NootedGreen build
+on:
+  push:
+    branches: [codex/nootedgreen-tahoe-build]
+    paths: [.github/workflows/nootedgreen-experimental.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Fetch pinned source trees
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/yankedi/HP-Elite-Dragonfly-G2-Hackintosh.git hp
+          git -C hp checkout --detach ea847a3cdef6d6b03bc614c590d5aa9624d16ce5
+          git clone https://github.com/sgiammori/NootedGreen.git upstream
+          git -C upstream checkout --detach 95f81898be65cb9f7b3d370ca78054be4cc8a62d
+          echo "959f8e83481927032b254fc7c9f9cc30cbaf7e67786cf19c4546c6113d0e3b95  upstream/NootedGreen/IGGucBinary.h" | shasum -a 256 -c
+          echo "86a4b8d5e435db269401f4c240107eff6d82ffee8043949de6dcf69149542ddd  upstream/NootedGreen/IGHucBinary.h" | shasum -a 256 -c
+      - name: Build source-only HP snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          export NG_BUILD_INPUTS="$PWD/upstream"
+          export NG_FIRMWARE_HEADERS="$PWD/upstream/NootedGreen"
+          zsh hp/graphics/build/build-nootedgreen.sh
+          product=hp/graphics/build/NootedGreen.kext
+          plutil -lint "$product/Contents/Info.plist"
+          file "$product/Contents/MacOS/NootedGreen"
+          codesign --verify --verbose=2 "$product"
+          mkdir -p result
+          ditto -c -k --sequesterRsrc --keepParent "$product" result/NootedGreen-experimental.zip
+          shasum -a 256 "$product/Contents/MacOS/NootedGreen" result/NootedGreen-experimental.zip | tee result/SHA256SUMS
+          printf '%s\n' 'Experimental HP source build; not verified on MateBook X Pro; not a complete EFI.' > result/README.txt
+          printf '%s\n' 'HP ea847a3cdef6d6b03bc614c590d5aa9624d16ce5' 'NootedGreen 95f81898be65cb9f7b3d370ca78054be4cc8a62d' >> result/README.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NootedGreen-HP-experimental
+          path: result/
+          if-no-files-found: error
+          retention-days: 7
