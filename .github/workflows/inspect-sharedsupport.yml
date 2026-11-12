@@ -1,0 +1,33 @@
+name: Inspect Tahoe SharedSupport image
+on:
+  push:
+    branches: [codex/nootedgreen-tahoe-build]
+    paths: [.github/workflows/inspect-sharedsupport.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - name: Inspect verified Apple installer image
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://swcdn.apple.com/content/downloads/37/33/140-93587-A_GRFFH93NOL/f944yaqo1cjhh2m0kxrl0zhcpg9yb9qphv/InstallAssistant.pkg'
+          mkdir -p work result mountpoint
+          curl --fail --location --retry 3 --output work/InstallAssistant.pkg "$URL"
+          echo 'af6839e6cf26398922c4a7742f4a89c878ab84f8  work/InstallAssistant.pkg' | shasum -a 1 -c
+          cd work
+          xar -xf InstallAssistant.pkg SharedSupport.dmg
+          file SharedSupport.dmg | tee ../result/image-type.txt
+          hdiutil attach -readonly -nobrowse -mountpoint "$GITHUB_WORKSPACE/mountpoint" SharedSupport.dmg
+          trap 'hdiutil detach "$GITHUB_WORKSPACE/mountpoint" || true' EXIT
+          find "$GITHUB_WORKSPACE/mountpoint" -maxdepth 9 -type f -print | sed "s|$GITHUB_WORKSPACE/mountpoint/||" | tee ../result/files.txt
+          du -ah "$GITHUB_WORKSPACE/mountpoint" | sort -h | tail -n 40 | sed "s|$GITHUB_WORKSPACE/mountpoint/||" | tee ../result/largest.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tahoe-25G83-SharedSupport-inventory
+          path: result/
+          if-no-files-found: error
+          retention-days: 7
