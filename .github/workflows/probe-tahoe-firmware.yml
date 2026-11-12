@@ -1,0 +1,31 @@
+name: Inspect 25G83 firmware sources
+on:
+  push:
+    branches: [codex/nootedgreen-tahoe-build]
+    paths: [.github/workflows/probe-tahoe-firmware.yml]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Install firmware inspection tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install blacktop/tap/ipsw
+          ipsw version
+      - name: Query official 25G83 firmware metadata only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir result
+          ipsw download ota --platform macos --build 25G83 --urls --no-color | tee result/ota-urls.txt
+          ipsw download ipsw --macos --build 25G83 --urls --no-color | tee result/ipsw-urls.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tahoe-25G83-firmware-metadata
+          path: result/
+          if-no-files-found: error
+          retention-days: 7
