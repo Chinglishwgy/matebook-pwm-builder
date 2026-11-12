@@ -1,0 +1,36 @@
+name: Experimental Samsung Xe adapter build
+on:
+  push:
+    branches: [codex/nootedgreen-tahoe-build]
+    paths: [.github/workflows/xedrv-experimental.yml]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Build isolated x86_64 adapter
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/joaovitoraramo/NootedGreen-NP550XDA.git samsung
+          git -C samsung checkout --detach 039fdfdac36b7229ea977999972e93c7c9b8e5b2
+          shasum -a 256 samsung/tools/xedrv/libxedrv.m
+          mkdir result
+          clang -arch x86_64 -mmacosx-version-min=15.0 -dynamiclib -O2 -fPIC -fno-objc-arc \
+            -install_name /Library/GPUBundles/AppleIntelTGLGraphicsMTLDriver.bundle/Contents/MacOS/libxedrv.dylib \
+            samsung/tools/xedrv/libxedrv.m -framework Foundation -framework CoreFoundation \
+            -framework Metal -framework IOSurface -lobjc -o result/libxedrv-experimental.dylib
+          codesign -f -s - result/libxedrv-experimental.dylib
+          codesign --verify --verbose=2 result/libxedrv-experimental.dylib
+          file result/libxedrv-experimental.dylib
+          otool -L result/libxedrv-experimental.dylib
+          shasum -a 256 result/libxedrv-experimental.dylib | tee result/SHA256SUMS
+          printf '%s\n' 'Experimental Samsung 26.7.1 adapter; not HP production version; no validation for 26.6.2 or MateBook.' > result/README.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Samsung-xedrv-experimental
+          path: result/
+          if-no-files-found: error
+          retention-days: 7
