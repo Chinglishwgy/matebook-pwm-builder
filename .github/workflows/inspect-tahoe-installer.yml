@@ -1,0 +1,30 @@
+name: Inspect Tahoe 25G83 installer contents
+on:
+  push:
+    branches: [codex/nootedgreen-tahoe-build]
+    paths: [.github/workflows/inspect-tahoe-installer.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - name: Download official 25G83 installer and inspect archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://swcdn.apple.com/content/downloads/37/33/140-93587-A_GRFFH93NOL/f944yaqo1cjhh2m0kxrl0zhcpg9yb9qphv/InstallAssistant.pkg'
+          mkdir -p work result
+          df -h . | tee result/disk.txt
+          curl --fail --location --retry 3 --output work/InstallAssistant.pkg "$URL"
+          shasum -a 1 work/InstallAssistant.pkg | tee result/installer-sha1.txt
+          echo 'af6839e6cf26398922c4a7742f4a89c878ab84f8  work/InstallAssistant.pkg' | shasum -a 1 -c
+          xar -tf work/InstallAssistant.pkg > result/xar-files.txt
+          grep -iE 'sharedsupport|payload|\.dmg' result/xar-files.txt || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tahoe-25G83-installer-inventory
+          path: result/
+          if-no-files-found: error
+          retention-days: 7
