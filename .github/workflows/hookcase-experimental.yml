@@ -1,0 +1,40 @@
+name: Experimental HookCase build
+on:
+  push:
+    branches: [codex/nootedgreen-tahoe-build]
+    paths: [.github/workflows/hookcase-experimental.yml]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Fetch pinned sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/yankedi/HP-Elite-Dragonfly-G2-Hackintosh.git hp
+          git -C hp checkout --detach ea847a3cdef6d6b03bc614c590d5aa9624d16ce5
+          git clone https://github.com/sgiammori/NootedGreen.git upstream
+          git -C upstream checkout --detach 95f81898be65cb9f7b3d370ca78054be4cc8a62d
+      - name: Build and inspect HookCase
+        shell: bash
+        run: |
+          set -euo pipefail
+          export NG_BUILD_INPUTS="$PWD/upstream"
+          zsh hp/graphics/build/build-hookcase.sh
+          product=hp/graphics/build/HookCase.kext
+          plutil -lint "$product/Contents/Info.plist"
+          file "$product/Contents/MacOS/HookCase"
+          codesign --verify --verbose=2 "$product"
+          mkdir -p result
+          ditto -c -k --sequesterRsrc --keepParent "$product" result/HookCase-experimental.zip
+          shasum -a 256 "$product/Contents/MacOS/HookCase" result/HookCase-experimental.zip | tee result/SHA256SUMS
+          printf '%s\n' 'Experimental source build. No hardware testing or Tahoe ABI validation.' > result/README.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HookCase-HP-experimental
+          path: result/
+          if-no-files-found: error
+          retention-days: 7
