@@ -1,0 +1,39 @@
+name: Experimental Tahoe shader compiler bridge
+on:
+  push:
+    branches: [codex/nootedgreen-tahoe-build]
+    paths: [.github/workflows/tahoe-shader-bridge.yml]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - name: Inspect runner and fetch pinned sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers
+          uname -m
+          git clone https://github.com/sgiammori/NootedGreen.git upstream
+          git -C upstream checkout --detach 95f81898be65cb9f7b3d370ca78054be4cc8a62d
+          git clone https://github.com/JulioNectar/Hackintosh-XPS13Plus-IrisXe-Tahoe.git xps
+          git -C xps checkout --detach 24450b476d7ca025b83c85d7b8362caf3234d2f2
+      - name: Build isolated shader bridge
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work result
+          sw_vers | tee result/RUNNER.txt
+          zsh xps/macos/build-shader-compiler.sh "$PWD/upstream/sle_Internal/sle" "$PWD/work"
+          test -f work/xe.bundle/Contents/MacOS/libLLVMbridge.dylib
+          shasum -a 256 work/xe.bundle/Contents/MacOS/libLLVMbridge.dylib work/xe.bundle/Contents/MacOS/libMTLIGCCompilerPlugin.dylib | tee result/SHA256SUMS
+          printf '%s\n' 'Experimental XPS shader bridge; exact runner build in RUNNER.txt. Not verified for 25G83 or Huawei.' > result/README.txt
+          ditto -c -k --sequesterRsrc --keepParent work/xe.bundle result/xe-experimental.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ShaderBridge-XPS-experimental
+          path: result/
+          if-no-files-found: error
+          retention-days: 7
