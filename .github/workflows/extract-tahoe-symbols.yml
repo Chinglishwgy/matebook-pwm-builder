@@ -1,0 +1,36 @@
+name: Extract target Tahoe GPUCompiler symbols
+on:
+  push:
+    branches: [codex/nootedgreen-tahoe-build]
+    paths: [.github/workflows/extract-tahoe-symbols.yml]
+permissions:
+  contents: read
+jobs:
+  extract:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - name: Install inspection tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install --formula blacktop/tap/ipsw
+          ipsw version
+      - name: Try extracting x86_64h cache from 25G83 IPSW
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://updates.cdn-apple.com/2026SummerFCS/fullrestores/140-75212/A2A24B94-1FC1-45A3-93F7-C51B02AF1F4D/UniversalMac_26.6.2_25G83_Restore.ipsw'
+          mkdir -p work result
+          ipsw extract --remote --dyld --dyld-arch x86_64h --output work "$URL"
+          find work -type f -name 'dyld_shared_cache*' -print | tee result/cache-paths.txt
+          cache="$(find work -type f -name dyld_shared_cache_x86_64h | head -n 1)"
+          test -n "$cache"
+          ipsw dyld tbd "$cache" /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/32023/Libraries/libLLVM.dylib -o result
+          find result -type f -print
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tahoe-25G83-GPUCompiler-symbols
+          path: result/
+          if-no-files-found: error
+          retention-days: 7
