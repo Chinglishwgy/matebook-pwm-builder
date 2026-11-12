@@ -1,0 +1,45 @@
+name: Isolated Metal bundle compatibility build
+on:
+  push:
+    branches: [codex/nootedgreen-tahoe-build]
+    paths: [.github/workflows/metal-bundle-experimental.yml]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - name: Fetch pinned projects
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone https://github.com/sgiammori/NootedGreen.git upstream
+          git -C upstream checkout --detach 95f81898be65cb9f7b3d370ca78054be4cc8a62d
+          git clone https://github.com/JulioNectar/Hackintosh-XPS13Plus-IrisXe-Tahoe.git xps
+          git -C xps checkout --detach 24450b476d7ca025b83c85d7b8362caf3234d2f2
+      - name: Build adapter and patch isolated Metal bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          src=upstream/sle_Internal/sle/AppleIntelTGLGraphicsMTLDriver.bundle
+          echo "e21a8d127c83877599c6e52cc0a8bdb81a968db75ab98345079bf367d2b17d3f  $src/Contents/MacOS/AppleIntelTGLGraphicsMTLDriver" | shasum -a 256 -c
+          mkdir result work
+          clang -arch x86_64 -mmacosx-version-min=15.0 -dynamiclib -fno-objc-arc -O2 \
+            -framework Foundation -framework Metal -framework IOSurface -lobjc \
+            -install_name /Library/GPUBundles/AppleIntelTGLGraphicsMTLDriver.bundle/Contents/MacOS/libxedrv.dylib \
+            -o work/libxedrv.dylib xps/macos/src/libxedrv.m
+          codesign -f -s - work/libxedrv.dylib
+          python3 xps/macos/patch-mtl17.py "$src" work/libxedrv.dylib work
+          product=work/AppleIntelTGLGraphicsMTLDriver.bundle
+          codesign --verify --deep --strict --verbose=2 "$product"
+          file "$product/Contents/MacOS/AppleIntelTGLGraphicsMTLDriver" "$product/Contents/MacOS/libxedrv.dylib"
+          shasum -a 256 "$product/Contents/MacOS/AppleIntelTGLGraphicsMTLDriver" "$product/Contents/MacOS/libxedrv.dylib" | tee result/SHA256SUMS
+          printf '%s\n' 'XPS 26.7.1 reference build; experimental; NOT verified on 26.6.2 or MateBook. No compiler bridge included.' > result/README.txt
+          ditto -c -k --sequesterRsrc --keepParent "$product" result/MetalBundle-experimental.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MetalBundle-XPS-experimental
+          path: result/
+          if-no-files-found: error
+          retention-days: 7
