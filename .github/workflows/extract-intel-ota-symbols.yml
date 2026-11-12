@@ -1,0 +1,36 @@
+name: Extract 25G83 Intel OTA symbols
+on:
+  push:
+    branches: [codex/nootedgreen-tahoe-build]
+    paths: [.github/workflows/extract-intel-ota-symbols.yml]
+permissions:
+  contents: read
+jobs:
+  extract:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - name: Install firmware inspection tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install --formula blacktop/tap/ipsw
+          ipsw version
+      - name: Extract only 25G83 Intel dyld cache from Apple OTA
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://updates.cdn-apple.com/2026SummerFCS/patches/140-75059/455574A0-5B0C-4EB3-A02F-BFF3BB8435C5/com_apple_MobileAsset_MacSoftwareUpdate/60533a8ae8e47c23593a6965d64c1f00a6396cfe.zip'
+          mkdir -p work result
+          ipsw extract --remote --dyld --dyld-arch x86_64h --output work "$URL"
+          find work -type f -name 'dyld_shared_cache*' -print | tee result/cache-paths.txt
+          cache="$(find work -type f -name dyld_shared_cache_x86_64h | head -n 1)"
+          test -n "$cache"
+          ipsw dyld tbd "$cache" /System/Library/PrivateFrameworks/GPUCompiler.framework/Versions/32023/Libraries/libLLVM.dylib -o result
+          find result -type f -print
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tahoe-25G83-Intel-GPUCompiler-symbols
+          path: result/
+          if-no-files-found: error
+          retention-days: 7
