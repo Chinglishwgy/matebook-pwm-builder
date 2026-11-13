@@ -1,0 +1,43 @@
+name: HP PCFIX38 source rebuild
+on:
+  push:
+    branches: [hp-pcfix38-rebuild]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Fetch pinned sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone -q https://github.com/yankedi/HP-Elite-Dragonfly-G2-Hackintosh.git hp
+          git -C hp checkout --detach ea847a3cdef6d6b03bc614c590d5aa9624d16ce5
+          git clone -q https://github.com/sgiammori/NootedGreen.git upstream
+          git -C upstream checkout --detach 95f81898be65cb9f7b3d370ca78054be4cc8a62d
+          echo 'e4d257e6784f549cac2635c0762312ad1be03436039bdde6ae018afa613f231f  hp/graphics/src/NootedGreen/kern_gen11.cpp' | shasum -a 256 -c
+          echo '959f8e83481927032b254fc7c9f9cc30cbaf7e67786cf19c4546c6113d0e3b95  upstream/NootedGreen/IGGucBinary.h' | shasum -a 256 -c
+          echo '86a4b8d5e435db269401f4c240107eff6d82ffee8043949de6dcf69149542ddd  upstream/NootedGreen/IGHucBinary.h' | shasum -a 256 -c
+      - name: Build with additional guide-listed unit
+        shell: bash
+        run: |
+          set -euo pipefail
+          export NG_BUILD_INPUTS="$PWD/upstream"
+          export NG_FIRMWARE_HEADERS="$PWD/upstream/NootedGreen"
+          python3 -c "from pathlib import Path; p=Path('hp/graphics/build/build-nootedgreen.sh'); s=p.read_text(); a='kern_patcherplus kern_start; do'; assert s.count(a)==1; p.write_text(s.replace(a,'kern_patcherplus kern_start kern_xepm; do'))"
+          zsh hp/graphics/build/build-nootedgreen.sh
+          product=hp/graphics/build/NootedGreen.kext
+          plutil -lint "$product/Contents/Info.plist"
+          file "$product/Contents/MacOS/NootedGreen"
+          codesign --verify --verbose=2 "$product"
+          mkdir result
+          ditto -c -k --sequesterRsrc --keepParent "$product" result/NootedGreen-PCFIX38-experimental.zip
+          shasum -a 256 "$product/Contents/MacOS/NootedGreen" result/NootedGreen-PCFIX38-experimental.zip | tee result/SHA256SUMS
+          printf '%s\n' 'Experimental source build; not HP production binary; not tested on MateBook; not a complete graphics stack.' > result/README.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hp-pcfix38-experimental
+          path: result/
