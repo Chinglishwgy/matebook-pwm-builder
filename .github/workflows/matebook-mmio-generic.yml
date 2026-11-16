@@ -1,0 +1,114 @@
+name: MateBook generic MCHBAR MMIO read/write
+
+on:
+  push:
+    paths:
+      - 'mmio-generic/**'
+      - '.github/workflows/matebook-mmio-generic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 35
+    steps:
+      - name: Checkout scripts
+        uses: actions/checkout@v5
+
+      - name: Checkout pinned VoltageShiftSecure source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone -q https://github.com/xCuri0/VoltageShiftSecure.git vs
+          git -C vs checkout --detach 6b4612c004a4631c4c3e4831f2a6989718dea6a5
+          test "$(git -C vs rev-parse HEAD)" = 6b4612c004a4631c4c3e4831f2a6989718dea6a5
+
+      - name: Apply generic MMIO patch (original commands preserved)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 mmio-generic/patch-mmio-generic.py
+          # New generic endpoint present.
+          grep -q 'actionMethodMMIO' vs/VoltageShiftAnVMSR/VoltageShfitAnVMSR.cpp
+          grep -q 'AnVMSRActionMethodMMIO = 2' vs/VoltageShiftAnVMSR/VoltageShiftAnVMSR.h
+          grep -q 'com.apple.iokit.IOPCIFamily' vs/VoltageShiftAnVMSR/VoltageShift-Info.plist
+          # Original commands must remain untouched.
+          grep -q 'read MSR: %s read <HEX_MSR>' vs/VoltageShiftAnVMSR/main.mm
+          grep -q 'write MSR: %s write <HEX_MSR> <HEX_VALUE>' vs/VoltageShiftAnVMSR/main.mm
+          grep -q 'strncmp(parameter, "power", 5)' vs/VoltageShiftAnVMSR/main.mm
+          grep -q 'strncmp(parameter, "turbo", 5)' vs/VoltageShiftAnVMSR/main.mm
+          grep -q 'strncmp(parameter, "offset", 6)' vs/VoltageShiftAnVMSR/main.mm
+          # No fixed-wattage logic leaked in.
+          if grep -q 'mmio20\|MMIO20\|safeSetPL1_20W' vs/VoltageShiftAnVMSR/main.mm; then
+            echo "unexpected fixed-20W code present"; exit 1
+          fi
+
+      - name: Build VoltageShift Kext on Intel macOS
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -project vs/VoltageShift.xcodeproj \
+            -configuration Release -target VoltageShift -sdk macosx \
+            ARCHS=x86_64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO \
+            CONFIGURATION_BUILD_DIR="$GITHUB_WORKSPACE/build-products" -quiet
+          test -s build-products/VoltageShift.kext/Contents/MacOS/VoltageShift
+          file build-products/VoltageShift.kext/Contents/MacOS/VoltageShift
+
+      - name: Build VoltageShift CLI with generic mmio-read / mmio-write
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -project vs/VoltageShift.xcodeproj \
+            -configuration Release -target voltageshift -sdk macosx \
+            ARCHS=x86_64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO \
+            CONFIGURATION_BUILD_DIR="$GITHUB_WORKSPACE/build-products" -quiet
+          test -s build-products/voltageshift
+          strings build-products/voltageshift | grep -q 'MMIO_READ'
+          strings build-products/voltageshift | grep -q 'MMIO_WRITE'
+          strings build-products/voltageshift | grep -q 'mmio-read <HEX_OFFSET>'
+
+      - name: Validate package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' build-products/VoltageShift.kext/Contents/Info.plist)" = VoltageShift
+          test "$(/usr/libexec/PlistBuddy -c 'Print :OSBundleLibraries:com.apple.iokit.IOPCIFamily' build-products/VoltageShift.kext/Contents/Info.plist)" = 2.9
+          mkdir -p output/MateBook-MMIO-Generic
+          ditto build-products/VoltageShift.kext output/MateBook-MMIO-Generic/VoltageShift.kext
+          cp build-products/voltageshift output/MateBook-MMIO-Generic/voltageshift
+          cp mmio-generic/README.md output/MateBook-MMIO-Generic/README.md
+          chmod +x output/MateBook-MMIO-Generic/voltageshift
+          git -C vs rev-parse HEAD > output/MateBook-MMIO-Generic/upstream-commit.txt
+          cd output
+          ditto -c -k --keepParent MateBook-MMIO-Generic MateBook-MMIO-Generic.zip
+          shasum -a 256 MateBook-MMIO-Generic.zip > SHA256SUMS
+          shasum -a 256 -c SHA256SUMS
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MateBook-MMIO-Generic
+          path: |
+            output/MateBook-MMIO-Generic.zip
+            output/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish public release (no login needed to download)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: mmio-generic-run${{ github.run_number }}
+          name: Generic MCHBAR MMIO read/write (run ${{ github.run_number }})
+          body: |
+            VoltageShiftSecure + generic MCHBAR MMIO read/write. All original
+            commands preserved; no fixed wattage. See README.md in the zip.
+
+            sudo voltageshift mmio-read 59a0 64
+            sudo voltageshift mmio-write 59a0 <HEX_VALUE> 64
+          files: |
+            output/MateBook-MMIO-Generic.zip
+            output/SHA256SUMS
+          fail_on_unmatched_files: true
