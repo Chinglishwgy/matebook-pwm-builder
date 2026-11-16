@@ -76,11 +76,14 @@ jobs:
           set -euo pipefail
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' build-products/VoltageShift.kext/Contents/Info.plist)" = VoltageShift
           test "$(/usr/libexec/PlistBuddy -c 'Print :OSBundleLibraries:com.apple.iokit.IOPCIFamily' build-products/VoltageShift.kext/Contents/Info.plist)" = 2.9
+          bash -n mmio-generic/mmio-set-pl1.sh
+          bash -n mmio-generic/install-mmio-generic.sh
           mkdir -p output/MateBook-MMIO-Generic
           ditto build-products/VoltageShift.kext output/MateBook-MMIO-Generic/VoltageShift.kext
           cp build-products/voltageshift output/MateBook-MMIO-Generic/voltageshift
           cp mmio-generic/README.md output/MateBook-MMIO-Generic/README.md
-          chmod +x output/MateBook-MMIO-Generic/voltageshift
+          cp mmio-generic/mmio-set-pl1.sh mmio-generic/install-mmio-generic.sh output/MateBook-MMIO-Generic/
+          chmod +x output/MateBook-MMIO-Generic/voltageshift output/MateBook-MMIO-Generic/mmio-set-pl1.sh output/MateBook-MMIO-Generic/install-mmio-generic.sh
           git -C vs rev-parse HEAD > output/MateBook-MMIO-Generic/upstream-commit.txt
           cd output
           ditto -c -k --keepParent MateBook-MMIO-Generic MateBook-MMIO-Generic.zip
