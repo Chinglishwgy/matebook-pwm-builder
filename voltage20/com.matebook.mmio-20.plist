@@ -6,7 +6,6 @@
   <key>ProgramArguments</key>
   <array><string>/bin/bash</string><string>/usr/local/libexec/matebook-pl1/auto-mmio20.sh</string></array>
   <key>RunAtLoad</key><true/>
-  <key>StartInterval</key><integer>300</integer>
   <key>StandardOutPath</key><string>/var/log/matebook-mmio-20.log</string>
   <key>StandardErrorPath</key><string>/var/log/matebook-mmio-20.log</string>
 </dict>

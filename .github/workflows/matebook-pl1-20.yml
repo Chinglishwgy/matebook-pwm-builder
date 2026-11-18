@@ -26,11 +26,13 @@ jobs:
           git -C vs checkout --detach 6b4612c004a4631c4c3e4831f2a6989718dea6a5
           test "$(git -C vs rev-parse HEAD)" = "6b4612c004a4631c4c3e4831f2a6989718dea6a5"
 
-      - name: Add narrow guarded PL1 20W writer
+      - name: Restrict Kext to fixed Tiger Lake PL1 access
         shell: bash
         run: |
           set -euo pipefail
+          python3 voltage20/patch-msr-allowlist.py
           python3 voltage20/patch-voltageshift.py
+          python3 voltage20/test-patches.py
           grep -q 'PL1_20W_LOCKED' vs/VoltageShiftAnVMSR/main.mm
           grep -q 'PL1_20W_OK' vs/VoltageShiftAnVMSR/main.mm
           grep -q 'uint64_t target = (original & ~pl1Mask) | rawTarget' vs/VoltageShiftAnVMSR/main.mm

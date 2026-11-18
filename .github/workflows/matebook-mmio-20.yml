@@ -26,12 +26,14 @@ jobs:
           git -C vs checkout --detach 6b4612c004a4631c4c3e4831f2a6989718dea6a5
           test "$(git -C vs rev-parse HEAD)" = 6b4612c004a4631c4c3e4831f2a6989718dea6a5
 
-      - name: Apply guarded MSR+MMIO patches
+      - name: Apply fixed Tiger Lake MSR+MMIO patches
         shell: bash
         run: |
           set -euo pipefail
+          python3 voltage20/patch-msr-allowlist.py
           python3 voltage20/patch-voltageshift.py
           python3 voltage20/patch-mmio.py
+          python3 voltage20/test-patches.py
           grep -q 'actionMethodMMIORAPL' vs/VoltageShiftAnVMSR/VoltageShfitAnVMSR.cpp
           grep -q 'MMIO20_READ_OK' vs/VoltageShiftAnVMSR/main.mm
           grep -q 'MMIO20_OK' vs/VoltageShiftAnVMSR/main.mm
@@ -68,14 +70,14 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' build-products/VoltageShift.kext/Contents/Info.plist)" = VoltageShift
           test "$(/usr/libexec/PlistBuddy -c 'Print :OSBundleLibraries:com.apple.iokit.IOPCIFamily' build-products/VoltageShift.kext/Contents/Info.plist)" = 2.9
           plutil -lint voltage20/com.matebook.mmio-20.plist
-          for p in voltage20/install-mmio-20w.sh voltage20/auto-mmio20.sh voltage20/rollback-mmio-20w.sh; do
+          for p in voltage20/install-mmio-20w.sh voltage20/auto-mmio20.sh voltage20/rollback-mmio-20w.sh voltage20/install.sh voltage20/uninstall-or-rollback.sh voltage20/verify.sh; do
             bash -n "$p"
           done
           mkdir -p output/MateBook-MMIO-20W
           ditto build-products/VoltageShift.kext output/MateBook-MMIO-20W/VoltageShift.kext
           cp build-products/voltageshift output/MateBook-MMIO-20W/voltageshift
-          cp voltage20/{install-mmio-20w.sh,auto-mmio20.sh,rollback-mmio-20w.sh,com.matebook.mmio-20.plist,MMIO-README.md} output/MateBook-MMIO-20W/
-          chmod +x output/MateBook-MMIO-20W/{voltageshift,install-mmio-20w.sh,auto-mmio20.sh,rollback-mmio-20w.sh}
+          cp voltage20/{install-mmio-20w.sh,auto-mmio20.sh,rollback-mmio-20w.sh,install.sh,uninstall-or-rollback.sh,verify.sh,com.matebook.mmio-20.plist,MMIO-README.md} output/MateBook-MMIO-20W/
+          chmod +x output/MateBook-MMIO-20W/{voltageshift,install-mmio-20w.sh,auto-mmio20.sh,rollback-mmio-20w.sh,install.sh,uninstall-or-rollback.sh,verify.sh}
           git -C vs rev-parse HEAD > output/MateBook-MMIO-20W/upstream-commit.txt
           cd output
           ditto -c -k --keepParent MateBook-MMIO-20W MateBook-MMIO-20W-Install.zip
